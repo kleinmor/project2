@@ -46,92 +46,244 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Morgan Klein mck2344
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+For this project, I used the same data that I used for project 1. I thought it would be more interesting to elaborate on this data that I have already spent some time analyzing rather than starting from scratch. As a refresher, this dataset looks at my Spotify streaming history and compares when I listened to certain songs to the qualities of that song, i.e. the tempo, popularity, instrumentalness, etc. There are 16 variables and 376 observations in this dataset. There is one binary variable, which is the year that the song was streamed (2020 or 2021). The variable "second" was removed from the pre-existing dataset because it was not useful as all of the observations for that variable were the same.
+
+In the next part of this project, you will see that I trim the dataset down further to only include the variables that indicate different qualities of the songs. I found that a much more interesting study was of how the qualities of songs influence their popularity. I will be performing cluster analysis on these songs based on their qualities and then turning popularity into a binary variable to see whether the qualities of songs can reasonably predict how popular they will be.
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
 
-# if your dataset needs tidying, do so here
+project1
 
-# any other code here
+project2 <- project1 %>% select(-second)
+
+project2
+
+nrow(project2)
+ncol(project2)
+
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+
+projdata <- project2 %>% select_if(is.numeric) %>% select(-mean_hype) %>% select(-mean_tempo) %>% select(-hype)
+
+sil_width <- vector()
+for (i in 2:10) {
+    kms <- kmeans(projdata, centers = i)
+    sil <- silhouette(kms$cluster, dist(projdata))
+    sil_width[i] <- mean(sil[, 3])
+}
+ggplot() + geom_line(aes(x = 1:10, y = sil_width)) + 
+    scale_x_continuous(name = "k", breaks = 1:10)
+
+projpam <- projdata %>% pam(k=2)
+projpam
+
+library(GGally)
+projdata %>% mutate(cluster = as.factor(projpam$clustering)) %>% 
+    ggpairs(cols = 1:6, aes(color = cluster))
+
+
 ```
 
-Discussion of clustering here
+In this section, I performed cluster analysis on all numeric, descriptive variables. This figure presents a lot of information because there are so many variables in this dataset. I removed the variables hype, mean_hype, and mean_tempo from the original dataset because these variables were combinations or variations of other variables in the dataset. Therefore, the correlations were essentially the same as other variables in this dataset because their values were dependent on the values of other variables. Based on an analysis of the largest silhouette widths, the data was sorted into 2 clusters.
+
+I think the most interesting conclusions that can be drawn from this figure surround the popularity of a song. Based on this figure, we can see that the popularity of a song is positively correlated with that song's danceablility and energy. From this, we can interpret that generally the more upbeat a song is, the more popular it is. Additionally, the popularity of a song is negatively correlated with its acousticness and instrumentalness. Therefore, the less singing/lyrics there are in a song, the more popular that song generally is. The only variable that does not appear to be strongly correlated with any of the other variables is the tempo.
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+pca1 <- princomp(projdata, cor=T)
+
+eigval <- pca1$sdev^2
+round(cumsum(eigval)/sum(eigval), 2)
+
+summary(pca1, loadings = T)
+
+pca1$scores %>% cor(use = "pair") %>% round(10)
+
+scores <- pca1$scores %>% as.data.frame() %>% mutate(popularity = projdata$Popularity)
+
+scores %>% ggplot(aes(Comp.1, Comp.2, color = popularity)) + 
+    geom_point() + coord_fixed() + ggtitle("PC Scores Based on Song Popularity")
+
+scores <- pca1$scores %>% as.data.frame() %>% mutate(acousticness = projdata$acousticness)
+scores %>% ggplot(aes(Comp.1, Comp.2, color = acousticness)) + geom_point() + coord_fixed() + ggtitle("PC Scores Based on Song Acousticness")
+
+scores <- pca1$scores %>% as.data.frame() %>% mutate(tempo = projdata$tempo)
+scores %>% ggplot(aes(Comp.1, Comp.2, color = tempo)) + geom_point() + coord_fixed() +
+  ggtitle("PC Scores Based on Song Tempo")
+
+
 ```
 
-Discussions of PCA here. 
+Here is a principle component analysis of the relevant numeric variables in this dataset. From this analysis, we can see that the first 2 components encompass approximately 70% of the total variance. We can also see from this analysis that the first component divides the data based on popularity/danceability/energy vs. acousticness/instrumentalness, which fits with what we observed about the correlations in the previous section. The second component is largely determined by the tempo of the song, which was more difficult to interpret in the previous section.
+
+Based on these observations, I created 3 different figures to help visualize this data. The first scatterplot colors the PC scores based on their popularity, so we can see that the popularity increases along with PC1. The second scatterplot colors the PC scores based on their acousticness, so we can see that the acousticness decreases along with PC1. The third scatterplot colors the PC scores based on their tempo, so we can see that the tempo decreases along with PC2.
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+median(projdata$Popularity)
+
+yhat <- ifelse(projdata$Popularity>67.5, "popular", "unpopular")
+yhat <- factor(yhat, levels=c("popular","unpopular"))
+
+logistic_fit <- glm(yhat == "popular" ~ danceability+energy+acousticness+instrumentalness+tempo, 
+                    data = projdata, family = "binomial")
+
+prob_reg <- predict(logistic_fit, type = "response")
+
+class_diag(prob_reg, truth=yhat, positive = "popular")
+
+pred <- sample(c("popular","unpopular"), size=length(yhat), replace=T)
+
+table(actual = pred, predicted = yhat)
+
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+projdata %>% mutate(yhat = ifelse(projdata$Popularity>67.5, "popular", "unpopular")) -> projdata
+
+k=10
+
+data <- sample_frac(projdata)  
+folds <- rep(1:k, length.out = nrow(data))  
+
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+  
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$yhat
+    
+
+    fit <- glm(yhat == "popular" ~ danceability+energy+acousticness+instrumentalness+tempo,
+               data = train, family = "binomial")
+    
+    
+    
+    probs <- predict(fit, newdata = test, type = "response")
+   
+    
+  
+    diags <- rbind(diags, class_diag(probs, truth, positive = "popular"))
+}
+
+
+summarize_all(diags, mean)
+
+
 ```
 
-Discussion here
+Based on the AUC (0.83), this model is predicting new observations well. The AUC after cross validation is approximately the same as the AUC before cross validation, so this model does not show signs of overfitting.
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+
+knn_fit <- knn3(yhat == "popular" ~ danceability+energy+acousticness+instrumentalness+tempo, data = projdata)
+
+prob_knn <- predict(knn_fit, projdata)
+
+class_diag(prob_knn[, 2], projdata$yhat, positive = "popular")
+
+pred <- sample(c("popular","unpopular"), size=length(yhat), replace=T)
+
+table(actual = pred, predicted = yhat)
 ```
 
 ```{R}
-# cross-validation of np classifier here
+
+k = 10
+
+data <- sample_frac(projdata) 
+folds <- rep(1:k, length.out = nrow(data))  
+
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+    
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$yhat
+    
+   
+    fit <- knn3(yhat == "popular" ~ danceability+energy+acousticness+instrumentalness+tempo, data = train)
+    
+    probs <- predict(fit, newdata = test)[, 2]
+   
+   
+    diags <- rbind(diags, class_diag(probs, truth, positive = "popular"))
+}
+
+
+summarize_all(diags, mean)
 ```
 
-Discussion
+This model performed very well with the new data per the AUC (>0.9). This model still does not show signs of overfitting. This nonparametric model performed better than the linear model based on its AUC.
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit <- train(yhat ~ danceability+energy+acousticness+instrumentalness+tempo , data=projdata, method="rpart")
+library(rpart.plot)
+rpart.plot(fit$finalModel,digits=4)
+
+fit<-lm(danceability~energy+acousticness+instrumentalness+tempo,data=projdata)
+pred_fit<-predict(fit)
+mean((projdata$danceability-pred_fit)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
+k=10
+data<-projdata[sample(nrow(projdata)),] 
+folds<-cut(seq(1:nrow(projdata)),breaks=k,labels=F) 
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,]
+  test<-data[folds==i,]
+  
+  fit<-lm(danceability~energy+acousticness+instrumentalness+tempo,data=projdata)
+  
+  pred_fit<-predict(fit,newdata=test)
+  
+  diags<-mean((test$danceability-pred_fit)^2) 
+}
+mean(diags)
 ```
 
-Discussion
+I included a classification tree to show the likelihood of a song being popular based on various factors. I then found the MSE of danceability compared to the other confounding variables (0.02). Next, I performed a cross validation and found the average MSE across the folds (0.02). These MSEs were approximately the same, which indicates that there are no signs of overfitting in this model.
 
 ### Python 
 
 ```{R}
 library(reticulate)
+
+head(projdata)
 ```
 
 ```{python}
-# python code here
+projdata = r.projdata
+
+type(projdata)
 ```
 
-Discussion
-
-### Concluding Remarks
-
-Include concluding remarks here, if any
+Here, the projdata dataset was loaded into a Python chunk. Python was used to describe what type of object projdata is.
 
 
 
