@@ -57,7 +57,7 @@ In the next part of this project, you will see that I trim the dataset down furt
 ```{R}
 library(tidyverse)
 
-project1
+project1 <- read_csv("project1.csv")
 
 project2 <- project1 %>% select(-second)
 
